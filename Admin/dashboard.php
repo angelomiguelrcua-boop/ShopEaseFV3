@@ -810,20 +810,245 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['edit_account']) && is
         </div>
       </div>
 
-      <!-- Placeholder sections for other content -->
+      <!-- Category Management Section -->
       <div id="aisle" class="section">
-        <h1>Category Management</h1>
-        <p>Category management functionality will be displayed here.</p>
+        <div class="dashboard-header">
+          <h1 class="dashboard-title">Category Management</h1>
+          <p class="dashboard-subtitle">Organize your products into categories for better navigation.</p>
+        </div>
+        
+        <!-- Add Category Form -->
+        <div style="background: white; border-radius: 20px; padding: 2rem; margin-bottom: 2rem; border: 1px solid var(--gray-200);">
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--gray-900); margin-bottom: 1.5rem;">Add New Category</h3>
+          <form method="post" style="display: grid; grid-template-columns: 2fr 1fr auto; gap: 1rem; align-items: end;">
+            <div>
+              <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: var(--gray-700);">Category Name</label>
+              <input type="text" name="category" placeholder="e.g., Electronics, Groceries" required 
+                style="width: 100%; padding: 0.75rem 1rem; border: 2px solid var(--gray-200); border-radius: 12px; font-size: 0.95rem; transition: border-color 0.2s ease;">
+            </div>
+            <div>
+              <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: var(--gray-700);">Aisle Number</label>
+              <input type="text" name="aisle" placeholder="e.g., A1, B2" required 
+                style="width: 100%; padding: 0.75rem 1rem; border: 2px solid var(--gray-200); border-radius: 12px; font-size: 0.95rem; transition: border-color 0.2s ease;">
+            </div>
+            <button type="submit" name="add_aisle" 
+              style="background: linear-gradient(135deg, var(--primary-500), var(--primary-600)); color: white; border: none; padding: 0.75rem 1.5rem; border-radius: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s ease;">
+              Add Category
+            </button>
+          </form>
+        </div>
+        
+        <!-- Mock Categories Display -->
+        <div style="background: white; border-radius: 20px; padding: 2rem; border: 1px solid var(--gray-200);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
+            <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--gray-900);">Existing Categories</h3>
+            <button type="button" style="background: var(--primary-100); color: var(--primary-600); border: none; padding: 0.5rem 1rem; border-radius: 8px; font-weight: 500; cursor: pointer;">
+              Edit Categories
+            </button>
+          </div>
+          
+          <!-- Mock Category List -->
+          <div style="display: grid; gap: 1rem;">
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--gray-50); border-radius: 12px;">
+              <div>
+                <span style="font-weight: 600; color: var(--gray-900);">Electronics</span>
+                <span style="margin-left: 1rem; color: var(--gray-500);">Aisle A1</span>
+              </div>
+              <span style="background: var(--success-500); color: white; padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">12 Products</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--gray-50); border-radius: 12px;">
+              <div>
+                <span style="font-weight: 600; color: var(--gray-900);">Groceries</span>
+                <span style="margin-left: 1rem; color: var(--gray-500);">Aisle B2</span>
+              </div>
+              <span style="background: var(--success-500); color: white; padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">8 Products</span>
+            </div>
+            <div style="display: flex; justify-content: space-between; align-items: center; padding: 1rem; background: var(--gray-50); border-radius: 12px;">
+              <div>
+                <span style="font-weight: 600; color: var(--gray-900);">Clothing</span>
+                <span style="margin-left: 1rem; color: var(--gray-500);">Aisle C3</span>
+              </div>
+              <span style="background: var(--success-500); color: white; padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">25 Products</span>
+            </div>
+          </div>
+        </div>
       </div>
 
+      <!-- Product Management Section -->
       <div id="product" class="section">
-        <h1>Product Management</h1>
-        <p>Product management functionality will be displayed here.</p>
+        <div class="dashboard-header">
+          <h1 class="dashboard-title">Product Management</h1>
+          <p class="dashboard-subtitle">Add, edit, and organize your product inventory.</p>
+        </div>
+        
+        <!-- Add Product Form -->
+        <div style="background: white; border-radius: 20px; padding: 2rem; margin-bottom: 2rem; border: 1px solid var(--gray-200);">
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--gray-900); margin-bottom: 1.5rem;">Add New Product</h3>
+          <form method="post" enctype="multipart/form-data" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+            <div>
+              <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: var(--gray-700);">Product Name</label>
+              <input type="text" name="name" placeholder="Enter product name" required 
+                style="width: 100%; padding: 0.75rem 1rem; border: 2px solid var(--gray-200); border-radius: 12px; font-size: 0.95rem;">
+            </div>
+            <div>
+              <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: var(--gray-700);">Price (₱)</label>
+              <input type="number" step="0.01" name="price" placeholder="0.00" required 
+                style="width: 100%; padding: 0.75rem 1rem; border: 2px solid var(--gray-200); border-radius: 12px; font-size: 0.95rem;">
+            </div>
+            <div>
+              <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: var(--gray-700);">Barcode</label>
+              <input type="text" name="barcode" placeholder="Enter barcode" required 
+                style="width: 100%; padding: 0.75rem 1rem; border: 2px solid var(--gray-200); border-radius: 12px; font-size: 0.95rem;">
+            </div>
+            <div>
+              <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: var(--gray-700);">Category</label>
+              <select name="category" required style="width: 100%; padding: 0.75rem 1rem; border: 2px solid var(--gray-200); border-radius: 12px; font-size: 0.95rem;">
+                <option value="">Select Category</option>
+                <option value="Electronics">Electronics</option>
+                <option value="Groceries">Groceries</option>
+                <option value="Clothing">Clothing</option>
+              </select>
+            </div>
+            <div style="grid-column: 1/-1;">
+              <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: var(--gray-700);">Description</label>
+              <textarea name="description" placeholder="Enter product details" 
+                style="width: 100%; padding: 0.75rem 1rem; border: 2px solid var(--gray-200); border-radius: 12px; min-height: 80px; font-size: 0.95rem;"></textarea>
+            </div>
+            <div style="grid-column: 1/-1; text-align: right;">
+              <button type="submit" name="add_product" 
+                style="background: linear-gradient(135deg, var(--primary-500), var(--primary-600)); color: white; border: none; padding: 0.75rem 2rem; border-radius: 12px; font-weight: 600; cursor: pointer; font-size: 0.95rem;">
+                Add Product
+              </button>
+            </div>
+          </form>
+        </div>
+        
+        <!-- Mock Products Display -->
+        <div style="background: white; border-radius: 20px; padding: 2rem; border: 1px solid var(--gray-200);">
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--gray-900); margin-bottom: 1.5rem;">Product Inventory</h3>
+          
+          <!-- Sample products -->
+          <div style="display: grid; gap: 1rem;">
+            <div style="display: grid; grid-template-columns: auto 1fr auto auto auto; gap: 1rem; align-items: center; padding: 1rem; background: var(--gray-50); border-radius: 12px;">
+              <div style="width: 40px; height: 40px; background: var(--primary-100); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: var(--primary-600); font-weight: 600;">📱</div>
+              <div>
+                <div style="font-weight: 600; color: var(--gray-900);">iPhone 14 Pro</div>
+                <div style="font-size: 0.9rem; color: var(--gray-500);">Electronics • A1</div>
+              </div>
+              <div style="text-align: right;">
+                <div style="font-weight: 600; color: var(--gray-900);">₱59,999.00</div>
+                <div style="font-size: 0.85rem; color: var(--gray-500);">SKU: IP14P128</div>
+              </div>
+              <span style="background: var(--success-500); color: white; padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">In Stock</span>
+              <button style="background: var(--gray-100); color: var(--gray-600); border: none; padding: 0.5rem; border-radius: 8px; cursor: pointer;">
+                ⋯
+              </button>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: auto 1fr auto auto auto; gap: 1rem; align-items: center; padding: 1rem; background: var(--gray-50); border-radius: 12px;">
+              <div style="width: 40px; height: 40px; background: var(--warning-500); border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600;">🥛</div>
+              <div>
+                <div style="font-weight: 600; color: var(--gray-900);">Fresh Milk 1L</div>
+                <div style="font-size: 0.9rem; color: var(--gray-500);">Groceries • B2</div>
+              </div>
+              <div style="text-align: right;">
+                <div style="font-weight: 600; color: var(--gray-900);">₱89.50</div>
+                <div style="font-size: 0.85rem; color: var(--gray-500);">SKU: MILK1L</div>
+              </div>
+              <span style="background: var(--warning-500); color: white; padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">Low Stock</span>
+              <button style="background: var(--gray-100); color: var(--gray-600); border: none; padding: 0.5rem; border-radius: 8px; cursor: pointer;">
+                ⋯
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
 
+      <!-- Admin Management Section -->
       <div id="admin" class="section">
-        <h1>Admin Management</h1>
-        <p>Admin management functionality will be displayed here.</p>
+        <div class="dashboard-header">
+          <h1 class="dashboard-title">Admin Management</h1>
+          <p class="dashboard-subtitle">Manage administrator accounts and permissions.</p>
+        </div>
+        
+        <!-- Add Admin Form (for Main Admin only) -->
+        <?php if ($is_main_admin): ?>
+        <div style="background: white; border-radius: 20px; padding: 2rem; margin-bottom: 2rem; border: 1px solid var(--gray-200);">
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--gray-900); margin-bottom: 1.5rem;">Add New Administrator</h3>
+          <form method="post" style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">
+            <div>
+              <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: var(--gray-700);">First Name</label>
+              <input type="text" name="first_name" required 
+                style="width: 100%; padding: 0.75rem 1rem; border: 2px solid var(--gray-200); border-radius: 12px; font-size: 0.95rem;">
+            </div>
+            <div>
+              <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: var(--gray-700);">Last Name</label>
+              <input type="text" name="last_name" required 
+                style="width: 100%; padding: 0.75rem 1rem; border: 2px solid var(--gray-200); border-radius: 12px; font-size: 0.95rem;">
+            </div>
+            <div>
+              <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: var(--gray-700);">Email</label>
+              <input type="email" name="email" required 
+                style="width: 100%; padding: 0.75rem 1rem; border: 2px solid var(--gray-200); border-radius: 12px; font-size: 0.95rem;">
+            </div>
+            <div>
+              <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: var(--gray-700);">Username</label>
+              <input type="text" name="username" required 
+                style="width: 100%; padding: 0.75rem 1rem; border: 2px solid var(--gray-200); border-radius: 12px; font-size: 0.95rem;">
+            </div>
+            <div>
+              <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: var(--gray-700);">Role</label>
+              <select name="role" required style="width: 100%; padding: 0.75rem 1rem; border: 2px solid var(--gray-200); border-radius: 12px; font-size: 0.95rem;">
+                <option value="">Select Role</option>
+                <option value="Main Admin">Main Admin</option>
+                <option value="Manager">Manager</option>
+                <option value="Inventory Staff">Inventory Staff</option>
+              </select>
+            </div>
+            <div>
+              <label style="display: block; margin-bottom: 0.5rem; font-weight: 600; color: var(--gray-700);">Password</label>
+              <input type="password" name="password" required 
+                style="width: 100%; padding: 0.75rem 1rem; border: 2px solid var(--gray-200); border-radius: 12px; font-size: 0.95rem;">
+            </div>
+            <div style="grid-column: 1/-1; text-align: right;">
+              <button type="submit" name="add_admin" 
+                style="background: linear-gradient(135deg, var(--primary-500), var(--primary-600)); color: white; border: none; padding: 0.75rem 2rem; border-radius: 12px; font-weight: 600; cursor: pointer; font-size: 0.95rem;">
+                Add Administrator
+              </button>
+            </div>
+          </form>
+        </div>
+        <?php endif; ?>
+        
+        <!-- Admin List -->
+        <div style="background: white; border-radius: 20px; padding: 2rem; border: 1px solid var(--gray-200);">
+          <h3 style="font-size: 1.25rem; font-weight: 700; color: var(--gray-900); margin-bottom: 1.5rem;">Administrator Accounts</h3>
+          
+          <div style="display: grid; gap: 1rem;">
+            <?php foreach ($accounts as $acc): ?>
+            <div style="display: grid; grid-template-columns: auto 1fr auto auto; gap: 1rem; align-items: center; padding: 1rem; background: var(--gray-50); border-radius: 12px;">
+              <div style="width: 48px; height: 48px; background: linear-gradient(135deg, var(--primary-500), var(--primary-600)); border-radius: 12px; display: flex; align-items: center; justify-content: center; color: white; font-weight: 600;">
+                <?= strtoupper(substr($acc['first_name'], 0, 1) . substr($acc['last_name'], 0, 1)) ?>
+              </div>
+              <div>
+                <div style="font-weight: 600; color: var(--gray-900);"><?= htmlspecialchars($acc['first_name'] . ' ' . $acc['last_name']) ?></div>
+                <div style="font-size: 0.9rem; color: var(--gray-500);"><?= htmlspecialchars($acc['email']) ?></div>
+                <div style="font-size: 0.85rem; color: var(--gray-400);">Contact: <?= htmlspecialchars($acc['contact']) ?></div>
+              </div>
+              <div style="text-align: center;">
+                <div style="background: var(--primary-100); color: var(--primary-700); padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.8rem; font-weight: 500;">
+                  <?= htmlspecialchars($acc['role']) ?>
+                </div>
+              </div>
+              <?php if ($is_main_admin): ?>
+              <button style="background: var(--gray-100); color: var(--gray-600); border: none; padding: 0.5rem; border-radius: 8px; cursor: pointer;">
+                ⋯
+              </button>
+              <?php endif; ?>
+            </div>
+            <?php endforeach; ?>
+          </div>
+        </div>
       </div>
     </div>
   </div>
