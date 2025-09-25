@@ -13,6 +13,8 @@ if ($conn->connect_error) {
     die("Connection failed: " . $conn->connect_error);
 }
 
+
+
 // -------------------------
 // ✅ SESSION & SECURITY
 // -------------------------
@@ -28,33 +30,40 @@ if (!isset($_SESSION['admin'])) {
 $current_role = $_SESSION['role'] ?? '';
 $is_main_admin = ($current_role === 'Main Admin');
 
-// Edit account via modal
+// -------------------------
+// LOG ACTIVITY FUNCTION
+// -------------------------
+
+
+// Edit account via modal (no ID in log)
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action']) && $_POST['action']==='edit_account_modal' && $is_main_admin) {
     $id = intval($_POST['edit_account_id']);
     $first_name = trim($_POST['first_name']);
     $last_name = trim($_POST['last_name']);
-    $email = trim($_POST['email']);
-    $contact = trim($_POST['contact']);
-    $role = $_POST['role'];
-    $valid_roles = ['Main Admin', 'Manager', 'Inventory Staff'];
-    if (!in_array($role, $valid_roles)) {
-        echo json_encode(['success'=>false, 'message'=>'Invalid role.']); exit;
-    }
     $stmt = $conn->prepare("UPDATE admins SET first_name=?, last_name=?, email=?, contact=?, role=? WHERE id=?");
-    $stmt->bind_param("sssssi", $first_name, $last_name, $email, $contact, $role, $id);
+    $stmt->bind_param("sssssi", $first_name, $last_name, $_POST['email'], $_POST['contact'], $_POST['role'], $id);
     if ($stmt->execute()) {
+        log_activity($conn, "Edited admin account: {$first_name} {$last_name}");
         echo json_encode(['success'=>true]);
     } else {
         echo json_encode(['success'=>false, 'message'=>'Database error.']);
     }
     exit;
 }
-// Delete account via modal
+
+// Delete account via modal (no ID in log)
 if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action']) && $_POST['action']==='delete_account_modal' && $is_main_admin) {
     $id = intval($_POST['delete_account_id']);
+    $stmt = $conn->prepare("SELECT first_name, last_name FROM admins WHERE id=?");
+    $stmt->bind_param("i", $id);
+    $stmt->execute();
+    $stmt->bind_result($fname, $lname);
+    $stmt->fetch();
+    $stmt->close();
     $stmt = $conn->prepare("DELETE FROM admins WHERE id=?");
     $stmt->bind_param("i", $id);
     if ($stmt->execute()) {
+        log_activity($conn, "Deleted admin account: {$fname} {$lname}");
         echo json_encode(['success'=>true]);
     } else {
         echo json_encode(['success'=>false, 'message'=>'Database error.']);
@@ -65,6 +74,7 @@ if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action']) && $_POST['
 // -------------------------
 // 🔑 LOGIN HANDLER
 // -------------------------
+// LOGIN HANDLER (log with time)
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['login'])) {
     $username = trim($_POST['username']);
     $password = $_POST['password'];
@@ -80,13 +90,18 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['login'])) {
             $_SESSION['admin'] = $row['username'];
             $_SESSION['username'] = $row['username'];
             $_SESSION['role'] = $row['role'];
+            $full_name = trim($row['first_name'] . ' ' . $row['last_name']);
+            $time = date("M d, Y H:i:s");
+            log_activity($conn, "$full_name logged in at $time");
             header("Location: dashboard.php");
             exit();
         } else {
             echo "<script>alert('❌ Invalid password!');</script>";
+            // Optionally log failed login attempts here
         }
     } else {
         echo "<script>alert('⚠️ User not found!');</script>";
+        // Optionally log failed login attempts here
     }
     $stmt->close();
 }
@@ -147,12 +162,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         echo json_encode(['success' => false, 'message' => $stmt->error]);
         exit;
     }
+    log_activity($conn, "Created admin account: {$first_name} {$last_name} ({$username})");
     echo json_encode(['success' => true]);
     exit;
 }
-
-// Get current user's role for JS
-$current_role = $_SESSION['role'] ?? '';
 
 // Handle admin account edit (for Main Admin only)
 if (
@@ -178,6 +191,7 @@ if (
     $stmt = $conn->prepare("UPDATE admins SET email=?, contact=?, role=? WHERE id=?");
     $stmt->bind_param("sssi", $email, $contact, $role, $edit_id);
     if ($stmt->execute()) {
+        log_activity($conn, "Edited admin account (ID: $edit_id)");
         $_SESSION['popup_message'] = "✅ Account updated successfully!";
         $_SESSION['popup_type'] = "success";
     } else {
@@ -188,22 +202,81 @@ if (
     header("Location: " . $_SERVER['PHP_SELF'] . "#admin");
     exit;
 }
+
+// ===== GET LOGGED-IN ADMIN INFO =====
+$admin_id = $_SESSION['admin_id'] ?? null;
+if ($admin_id) {
+    $stmt = $conn->prepare("SELECT * FROM admins WHERE id=?");
+    $stmt->bind_param("i", $admin_id);
+    $stmt->execute();
+    $admin_result = $stmt->get_result();
+    $admin_info = $admin_result->fetch_assoc();
+    $stmt->close();
+} else {
+    $admin_info = [
+        'first_name' => 'Unknown',
+        'last_name' => '',
+        'email' => '',
+        'contact' => '',
+        'id_picture' => 'https://via.placeholder.com/80'
+    ];
+}
+
+// ---- AJAX: Full inbox message list for modal ----
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'get_inbox_full') {
+    $my_id = $_SESSION['admin_id'];
+    $res = $conn->prepare("SELECT m.*, a.username AS sender_username FROM messages m JOIN admins a ON m.sender_id=a.id WHERE receiver_id=? ORDER BY created_at DESC");
+    $res->bind_param("i", $my_id);
+    $res->execute();
+    $result = $res->get_result();
+    $msgs = [];
+    while ($row = $result->fetch_assoc()) {
+        $msgs[] = [
+            'sender_username' => $row['sender_username'],
+            'subject' => htmlspecialchars($row['subject']),
+            'message' => nl2br(htmlspecialchars($row['message'])),
+            'created_at' => $row['created_at'],
+            'attachment' => $row['attachment'] ? $row['attachment'] : null
+        ];
+    }
+    echo json_encode($msgs);
+    exit;
+}
+
+// ---- AJAX: Get active accounts (you can define "active" as all logged-in admins, or all admins) ----
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'get_active_accounts') {
+    // Example: show all admins except yourself
+    $my_id = $_SESSION['admin_id'];
+    $res = $conn->prepare("SELECT username, role, id_picture FROM admins WHERE id<>?");
+    $res->bind_param("i", $my_id);
+    $res->execute();
+    $result = $res->get_result();
+    $users = [];
+    while ($row = $result->fetch_assoc()) {
+        $users[] = $row;
+    }
+    echo json_encode($users);
+    exit;
+}
+
 // -------------------------
 // 🗂️ AISLE HANDLERS
 // -------------------------
 
-// ➕ Add Aisle
+// Add Aisle
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_aisle'])) {
     $category = ucfirst(trim($_POST['category']));
     $aisle = ucfirst(trim($_POST['aisle']));
     $check = $conn->query("SELECT * FROM aisles WHERE category = '$category' OR aisle = '$aisle'");
-    if ($check->num_rows > 0) {
+    if ($check->num_rows == 0) {
+        $conn->query("INSERT INTO aisles (category, aisle) VALUES ('$category', '$aisle')");
+        $time = date("M d, Y H:i:s");
+        log_activity($conn, "Added Aisle Number $aisle with category $category at $time");
+        $_SESSION['popup_message'] = "Aisle added successfully!";
+        $_SESSION['popup_type'] = "success";
+    } else {
         $_SESSION['popup_message'] = "Category or Aisle number already exists!";
         $_SESSION['popup_type'] = "error";
-    } else {
-        $conn->query("INSERT INTO aisles (category, aisle) VALUES ('$category', '$aisle')");
-        $_SESSION['popup_message'] = " Aisle added successfully!";
-        $_SESSION['popup_type'] = "success";
     }
     $_SESSION['active_section'] = 'aisle';
     header("Location: dashboard.php");
@@ -214,12 +287,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_aisle'])) {
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_aisle'])) {
     $id = $_POST['aisle_id'];
     $new_aisle = ucfirst(trim($_POST['new_aisle']));
+    $stmt = $conn->prepare("SELECT aisle, category FROM aisles WHERE id=?");
+    $stmt->bind_param("i", $id);
+    $stmt->execute();
+    $stmt->bind_result($old_aisle, $category);
+    $stmt->fetch();
+    $stmt->close();
+    $conn->query("UPDATE aisles SET aisle = '$new_aisle' WHERE id = '$id'");
+    $time = date("M d, Y H:i:s");
+    log_activity($conn, "Edited Aisle Number from $old_aisle to $new_aisle (Category: $category) at $time");
+
     $check = $conn->query("SELECT * FROM aisles WHERE aisle = '$new_aisle' AND id != '$id'");
     if ($check->num_rows > 0) {
         $_SESSION['popup_message'] = "⚠️ Aisle number already exists!";
         $_SESSION['popup_type'] = "error";
     } else {
         $conn->query("UPDATE aisles SET aisle = '$new_aisle' WHERE id = '$id'");
+        log_activity($conn, "Updated aisle ID: $id to $new_aisle");
         $_SESSION['popup_message'] = "✅ Aisle updated successfully!";
         $_SESSION['popup_type'] = "success";
     }
@@ -249,6 +333,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_all'])) {
             $stmt->execute();
             $stmt->close();
         }
+        log_activity($conn, "Saved all aisle changes.");
         $_SESSION['popup_message'] = "All aisle numbers updated successfully!";
         $_SESSION['popup_type'] = "success";
         $_SESSION['active_section'] = 'aisle';
@@ -270,6 +355,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_aisle'])) {
     $stmt = $conn->prepare("UPDATE aisles SET category = ?, aisle = ? WHERE id = ?");
     $stmt->bind_param("ssi", $category, $aisle, $id);
     if ($stmt->execute()) {
+        log_activity($conn, "Updated aisle ID: $id to $aisle (Category: $category)");
         echo json_encode(["status" => "success", "message" => "Aisle updated successfully!"]);
     } else {
         echo json_encode(["status" => "error", "message" => "Update failed!"]);
@@ -280,9 +366,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['update_aisle'])) {
 // ❌ Delete Aisle
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_aisle_id'])) {
     $delete_id = intval($_POST['delete_aisle_id']);
+    $stmt = $conn->prepare("SELECT aisle, category FROM aisles WHERE id=?");
+    $stmt->bind_param("i", $delete_id);
+    $stmt->execute();
+    $stmt->bind_result($aisle, $category);
+    $stmt->fetch();
+    $stmt->close();
     $stmt = $conn->prepare("DELETE FROM aisles WHERE id = ?");
     $stmt->bind_param("i", $delete_id);
     if ($stmt->execute()) {
+        $time = date("M d, Y H:i:s");
+        log_activity($conn, "Deleted Aisle Number $aisle (Category: $category) at $time");
+
+   
+        log_activity($conn, "Deleted aisle ID: $delete_id");
         $_SESSION['popup_message'] = "Aisle deleted successfully!";
         $_SESSION['popup_type'] = "success";
     } else {
@@ -311,7 +408,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["save_category"])) {
 
         $stmt = $conn->prepare("UPDATE products SET name=?, price=?, promo_price=?, barcode=?, description=?, available=? WHERE id=?");
         $stmt->bind_param("sdsssii", $pname, $price, $promo_price, $barcode, $description, $available, $pid);
-        if ($stmt->execute()) $any_updated = true;
+        if ($stmt->execute()) {
+            log_activity($conn, "Updated product: $pname (ID: $pid)");
+            $any_updated = true;
+        }
         $stmt->close();
     }
     $_SESSION['redirect_to_product'] = true;
@@ -323,12 +423,161 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["save_category"])) {
     exit;
 }
 
+// ... your existing code above ...
+
+// LOG ACTIVITY FUNCTION
+function log_activity($conn, $description) {
+    if (isset($_SESSION['admin_id'])) {
+        $stmt = $conn->prepare("INSERT INTO activity_logs (admin_id, activity) VALUES (?, ?)");
+        $stmt->bind_param("is", $_SESSION['admin_id'], $description);
+        $stmt->execute();
+        $stmt->close();
+    }
+}
+
+// Example: get formatted date/time for logs if needed
+function now_time() {
+    return date('Y-m-d H:i:s');
+}
+
+// Edit account via modal (no ID in log)
+if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action']) && $_POST['action']==='edit_account_modal' && $is_main_admin) {
+    $id = intval($_POST['edit_account_id']);
+    $first_name = trim($_POST['first_name']);
+    $last_name = trim($_POST['last_name']);
+    $stmt = $conn->prepare("UPDATE admins SET first_name=?, last_name=?, email=?, contact=?, role=? WHERE id=?");
+    $stmt->bind_param("sssssi", $first_name, $last_name, $_POST['email'], $_POST['contact'], $_POST['role'], $id);
+    if ($stmt->execute()) {
+        log_activity($conn, "Edited admin account: {$first_name} {$last_name}");
+        echo json_encode(['success'=>true]);
+    } else {
+        echo json_encode(['success'=>false, 'message'=>'Database error.']);
+    }
+    exit;
+}
+
+// Delete account via modal (no ID in log)
+if ($_SERVER["REQUEST_METHOD"] === "POST" && isset($_POST['action']) && $_POST['action']==='delete_account_modal' && $is_main_admin) {
+    $id = intval($_POST['delete_account_id']);
+    $stmt = $conn->prepare("SELECT first_name, last_name FROM admins WHERE id=?");
+    $stmt->bind_param("i", $id);
+    $stmt->execute();
+    $stmt->bind_result($fname, $lname);
+    $stmt->fetch();
+    $stmt->close();
+    $stmt = $conn->prepare("DELETE FROM admins WHERE id=?");
+    $stmt->bind_param("i", $id);
+    if ($stmt->execute()) {
+        log_activity($conn, "Deleted admin account: {$fname} {$lname}");
+        echo json_encode(['success'=>true]);
+    } else {
+        echo json_encode(['success'=>false, 'message'=>'Database error.']);
+    }
+    exit;
+}
+
+// LOGIN HANDLER (log with time)
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST['login'])) {
+    // ...your code...
+    if ($row = $result->fetch_assoc()) {
+        if (password_verify($password, $row['password'])) {
+            $_SESSION['admin_id'] = $row['id'];
+            $_SESSION['admin'] = $row['username'];
+            $_SESSION['username'] = $row['username'];
+            $_SESSION['role'] = $row['role'];
+            $time = date("M d, Y H:i:s");
+            log_activity($conn, "Logged in at $time");
+            header("Location: dashboard.php");
+            exit();
+        }
+        // ...
+    }
+    // ...
+}
+
+// Add Aisle
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_aisle'])) {
+    $category = ucfirst(trim($_POST['category']));
+    $aisle = ucfirst(trim($_POST['aisle']));
+    $check = $conn->query("SELECT * FROM aisles WHERE category = '$category' OR aisle = '$aisle'");
+    if ($check->num_rows == 0) {
+        $conn->query("INSERT INTO aisles (category, aisle) VALUES ('$category', '$aisle')");
+        log_activity($conn, "Added Aisle Number $aisle with category $category");
+        // ...
+    }
+    // ...
+}
+
+// Edit Aisle (single)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['save_aisle'])) {
+    $id = $_POST['aisle_id'];
+    $new_aisle = ucfirst(trim($_POST['new_aisle']));
+    $stmt = $conn->prepare("SELECT aisle FROM aisles WHERE id=?");
+    $stmt->bind_param("i", $id);
+    $stmt->execute();
+    $stmt->bind_result($old_aisle);
+    $stmt->fetch();
+    $stmt->close();
+    $conn->query("UPDATE aisles SET aisle = '$new_aisle' WHERE id = '$id'");
+    log_activity($conn, "Edited Aisle Number from $old_aisle to $new_aisle");
+    // ...
+}
+
+// Delete Aisle
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_aisle_id'])) {
+    $delete_id = intval($_POST['delete_aisle_id']);
+    $stmt = $conn->prepare("SELECT aisle, category FROM aisles WHERE id=?");
+    $stmt->bind_param("i", $delete_id);
+    $stmt->execute();
+    $stmt->bind_result($aisle, $category);
+    $stmt->fetch();
+    $stmt->close();
+    $stmt = $conn->prepare("DELETE FROM aisles WHERE id = ?");
+    $stmt->bind_param("i", $delete_id);
+    if ($stmt->execute()) {
+        log_activity($conn, "Deleted Aisle Number $aisle (Category: $category)");
+        // ...
+    }
+    // ...
+}
+
+// Add Product
+if (isset($_POST['add_product'])) {
+    $name = trim($_POST['name']);
+    // ...your code...
+    if ($stmt->execute()) {
+        log_activity($conn, "Added \"$name\" as new product.");
+        // ...
+    }
+    // ...
+}
+
+// Save category edits: product price, promo, description, availability
+if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["save_category"])) {
+    foreach ($_POST["name"] as $pid => $pname) {
+        $changes = [];
+        // compare old/new values as needed (optional)
+        $desc = trim($_POST["description"][$pid]);
+        $promo_price = $_POST["promo_price"][$pid] ?? '';
+        $available = isset($_POST["available"][$pid]) ? "Available" : "Not Available";
+        $logstr = "Updated product \"$pname\"";
+        if($promo_price) $logstr .= " (Promo Price: $promo_price)";
+        $logstr .= " (Description: $desc)";
+        $logstr .= " ($available)";
+        log_activity($conn, $logstr);
+    }
+}
+
+
+
 // Set available from not available list
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["make_available"])) {
     $id = intval($_POST["make_available"]);
     $stmt = $conn->prepare("UPDATE products SET available=1 WHERE id=?");
     $stmt->bind_param("i", $id);
-    $stmt->execute();
+    if ($stmt->execute()) {
+        log_activity($conn, "Marked product ID $id as available.");
+    }
     $stmt->close();
     $_SESSION['redirect_to_product'] = true;
     $_SESSION['popup_message'] = "✅ Product marked as available!";
@@ -340,6 +589,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["make_available"])) {
 // Add Product handler
 if (isset($_POST['add_product'])) {
     $name = trim($_POST['name']);
+    $time = date("M d, Y H:i:s");
     $price = floatval($_POST['price']);
     $barcode = trim($_POST['barcode']);
     $category = trim($_POST['category']);
@@ -354,7 +604,7 @@ if (isset($_POST['add_product'])) {
     // Get BOTH aisle_id AND aisle number based on category
     $aisle_id = null;
     $aisle_number = null; // Store the actual aisle number
-    
+
     if ($category !== '') {
         // Modified query to get both id AND aisle number
         $get_aisle = $conn->prepare("SELECT id, aisle FROM aisles WHERE category = ? LIMIT 1");
@@ -367,7 +617,7 @@ if (isset($_POST['add_product'])) {
         }
         $get_aisle->close();
     }
-    
+
     $imgData = '';
     if (isset($_FILES['image']) && $_FILES['image']['tmp_name']) {
         $imgTmp = $_FILES['image']['tmp_name'];
@@ -376,30 +626,30 @@ if (isset($_POST['add_product'])) {
         $imgData = 'data:' . $imgType . ';base64,' . base64_encode($imgContent);
     }
 
-    // Modified SQL to include the aisle column
     $stmt = $conn->prepare("INSERT INTO products
         (name, price, barcode, category, aisle_id, aisle, description, image,
          promo_status, promo_type, promo_start, promo_end, promo_details, promo_price)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
-        
-    // Added aisle_number to the parameters
+
     $stmt->bind_param("sdssissssssssd",
         $name, $price, $barcode, $category, $aisle_id, $aisle_number, $description, $imgData,
         $promo_status, $promo_type, $promo_start, $promo_end, $promo_details, $promo_price);
-    
+
     if ($stmt->execute()) {
-        $_SESSION['redirect_to_product'] = true;
-        $_SESSION['popup_message'] = "✅ Product added successfully with aisle number: $aisle_number";
+        log_activity($conn, "Added \"$name\" as new product in category \"$category\" (Aisle: $aisle_number) at $time.");
+        $_SESSION['popup_message'] = "✅ Product \"$name\" added successfully!";
         $_SESSION['popup_type'] = "success";
     } else {
         $_SESSION['popup_message'] = "❌ Error adding product: " . $stmt->error;
         $_SESSION['popup_type'] = "error";
     }
     $stmt->close();
-    
     header("Location: ".$_SERVER['PHP_SELF']."#product");
     exit;
 }
+    
+
+
 
 // Similarly, update the product update handler
 if (isset($_POST['update_product']) && isset($_POST['edit_product_id']) && $_POST['edit_product_id'] !== '') {
@@ -447,10 +697,12 @@ if (isset($_POST['update_product']) && isset($_POST['edit_product_id']) && $_POS
                     $promo_price, $promo_start, $promo_end,
                     $id);
                     
-    $stmt->execute();
-    $_SESSION['popup_message'] = "✅ Product updated successfully!";
-    $_SESSION['popup_type'] = "success";
-    
+    if ($stmt->execute()) {
+        log_activity($conn, "Updated product: $name (ID: $id)");
+        $_SESSION['popup_message'] = "✅ Product updated successfully!";
+        $_SESSION['popup_type'] = "success";
+    }
+    $stmt->close();
     header("Location: ".$_SERVER['PHP_SELF']."#product");
     exit;
 }
@@ -504,13 +756,17 @@ if (isset($_POST['update_product']) && isset($_POST['edit_product_id']) && $_POS
                         $promo_status, $promo_type, $promo_details, 
                         $promo_price, $promo_start, $promo_end, 
                         $id);
-        $stmt->execute();
-        $_SESSION['popup_message'] = "✅ Product updated successfully!";
-        $_SESSION['popup_type'] = "success";
+        if ($stmt->execute()) {
+            log_activity($conn, "Updated product: $name (ID: $id)");
+            $_SESSION['popup_message'] = "✅ Product updated successfully!";
+            $_SESSION['popup_type'] = "success";
+        }
     }
+    $stmt->close();
     header("Location: ".$_SERVER['PHP_SELF']."#product");
     exit;
 }
+
 // -------------------------
 // ✅ COUNTS FOR DASHBOARD
 // -------------------------
@@ -558,7 +814,6 @@ if (isset($_GET['action']) && $_GET['action'] === 'fetch_available') {
     exit;
 }
 
-
 if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["bulk_make_available"])) {
     $ids = isset($_POST["not_available_ids"]) ? $_POST["not_available_ids"] : [];
     if (!empty($ids) && is_array($ids)) {
@@ -569,6 +824,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["bulk_make_available"])
         $stmt->bind_param($types, ...$ids);
         $stmt->execute();
         $stmt->close();
+        log_activity($conn, "Bulk marked products as available: " . implode(",", $ids));
         $_SESSION['redirect_to_product'] = true;
         $_SESSION['popup_message'] = "✅ Selected products are now available!";
         $_SESSION['popup_type'] = "success";
@@ -591,6 +847,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["disable_promo"])) {
         $stmt->execute();
         $stmt->close();
     }
+    log_activity($conn, "Disabled promo for products: " . implode(",", $promo_ids));
     $_SESSION['popup_message'] = "Promo disabled for selected item(s)!";
     $_SESSION['popup_type'] = "success";
     $_SESSION['redirect_to_product'] = true;
@@ -598,7 +855,79 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["disable_promo"])) {
     exit;
 }
 
+// -------------------------
+// AJAX: GET RECENT ACTIVITY LOGS (for pretty display)
+// -------------------------
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'get_recent_activity') {
+    // Fetch the 10 most recent logs and JOIN admin info for name/role
+    $logs = [];
+    $stmt = $conn->prepare("
+      SELECT l.activity, l.created_at, a.first_name, a.last_name, a.role
+      FROM activity_logs l
+      LEFT JOIN admins a ON l.admin_id = a.id
+      ORDER BY l.created_at DESC
+      LIMIT 10
+    ");
+    $stmt->execute();
+    $res = $stmt->get_result();
+    while ($row = $res->fetch_assoc()) {
+        $row['full_name'] = trim(($row['role']=='Main Admin' ? 'Main Admin' : $row['first_name'].' '.$row['last_name']));
+        $row['role'] = $row['role'] ?? '';
+        $logs[] = $row;
+    }
+    header('Content-Type: application/json');
+    echo json_encode($logs);
+    exit;
+}
 
+
+
+// Fetch admin info, metrics, etc. (already present in your code)
+$photo = (!empty($admin_info['id_picture']) && file_exists($admin_info['id_picture'])) ? $admin_info['id_picture'] : 'https://via.placeholder.com/80';
+$full_name = htmlspecialchars($admin_info['first_name'] . ' ' . $admin_info['last_name']);
+$email = htmlspecialchars($admin_info['email']);
+$contact = htmlspecialchars($admin_info['contact']);
+$username = htmlspecialchars($admin_info['username'] ?? 'admin');
+$role = htmlspecialchars($admin_info['role']);
+$last_updated = date("M d, Y H:i"); // You can fetch from DB if you log updates
+
+// Metrics (make sure these are set in your PHP)
+$totalAisles = $totalAisles ?? 0;
+$totalProducts = $totalProducts ?? 0;
+$totalAdmins = $totalAdmins ?? 0;
+$todayAct = $todayAct ?? 0;
+$availableProducts = $availableProducts ?? 0;
+$onPromo = $onPromo ?? 0;
+$outOfStock = $outOfStock ?? 0;
+$pendingActions = $pendingActions ?? 0;
+$productsAdded = $productsAdded ?? 0;
+$productsUpdated = $productsUpdated ?? 0;
+$promosToday = $promosToday ?? 0;
+$inventoryChange = $inventoryChange ?? 0;
+
+
+// AJAX: Get dashboard metrics in real time
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['action'] === 'get_dashboard_metrics') {
+    $resp = [];
+    $resp['totalProducts'] = (int)$conn->query("SELECT COUNT(*) FROM products")->fetch_row()[0];
+    $resp['totalAisles'] = (int)$conn->query("SELECT COUNT(*) FROM aisles")->fetch_row()[0];
+    $resp['totalAdmins'] = (int)$conn->query("SELECT COUNT(*) FROM admins")->fetch_row()[0];
+    $resp['onPromo'] = (int)$conn->query("SELECT COUNT(*) FROM products WHERE promo_status='on'")->fetch_row()[0];
+    $resp['availableProducts'] = (int)$conn->query("SELECT COUNT(*) FROM products WHERE available=1")->fetch_row()[0];
+    $resp['outOfStock'] = (int)$conn->query("SELECT COUNT(*) FROM products WHERE available=0")->fetch_row()[0];
+    $resp['pendingActions'] = (int)$conn->query("SELECT COUNT(*) FROM activity_logs WHERE created_at >= CURDATE()")->fetch_row()[0];
+    $resp['todayAct'] = (int)$conn->query("SELECT COUNT(*) FROM activity_logs WHERE DATE(created_at)=CURDATE()")->fetch_row()[0];
+    $resp['productsAdded'] = (int)$conn->query("SELECT COUNT(*) FROM products WHERE DATE(created_at)=CURDATE()")->fetch_row()[0];
+    $resp['productsUpdated'] = (int)$conn->query("SELECT COUNT(*) FROM products WHERE DATE(updated_at)=CURDATE()")->fetch_row()[0];
+    $resp['promosToday'] = (int)$conn->query("SELECT COUNT(*) FROM products WHERE promo_status='on' AND DATE(promo_start)=CURDATE()")->fetch_row()[0];
+    $resp['aislesAdded'] = (int)$conn->query("SELECT COUNT(*) FROM aisles WHERE DATE(created_at)=CURDATE()")->fetch_row()[0];
+    $resp['last_updated'] = date("M d, Y H:i");
+    header('Content-Type: application/json');
+    echo json_encode($resp);
+    exit;
+}
+
+//end
 ?>
 
 
@@ -796,6 +1125,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST" && isset($_POST["disable_promo"])) {
     .not-available-table td input, .not-available-table td textarea { width: 100%; }
     .notif-popup { position:fixed; left:50%; top:30px; transform:translateX(-50%); min-width:280px; z-index:9999; }
   
+
+    
+
   </style>
 </head>
 <body>
@@ -818,6 +1150,7 @@ if (isset($_SESSION['popup_message'])) {
 
 
   <div class="sidebar">
+    
     <h2><i class="fa-solid fa-chart-line"></i> Dashboard</h2>
     <a href="#home" onclick="showSection('home', this)" class="active"><i class="fa-solid fa-house"></i> Home</a>
     <a href="#aisle" onclick="showSection('aisle', this)"><i class="fa-solid fa-boxes-stacked"></i> Aisle Management</a>
@@ -827,10 +1160,33 @@ if (isset($_SESSION['popup_message'])) {
 
   </div>
 
-  <div class="content">
-    <div class="main-section">
+<div class="content">
+  
 
+
+    <div class="main-section">
 <?php
+
+// ===== Fetch Admin Info FIRST =====
+$admin_id = $_SESSION['admin_id'] ?? null;
+if ($admin_id) {
+    $stmt = $conn->prepare("SELECT * FROM admins WHERE id=?");
+    $stmt->bind_param("i", $admin_id);
+    $stmt->execute();
+    $admin_result = $stmt->get_result();
+    $admin_info = $admin_result->fetch_assoc();
+    $stmt->close();
+} else {
+    $admin_info = [
+        'first_name' => 'Unknown',
+        'last_name' => '',
+        'email' => '',
+        'contact' => '',
+        'id_picture' => 'https://via.placeholder.com/80',
+        'role' => 'Admin'
+    ];
+}
+$is_main_admin = strtolower($admin_info['role']) === 'admin';
 // ===== DB COUNTERS =====
 $resultAisles = $conn->query("SELECT COUNT(*) AS total_aisles FROM aisles");
 $rowAisles = $resultAisles->fetch_assoc();
@@ -843,37 +1199,491 @@ $totalProducts = $rowProducts['total_products'];
 $resultAdmins = $conn->query("SELECT COUNT(*) AS total_admins FROM admins");
 $rowAdmins = $resultAdmins->fetch_assoc();
 $totalAdmins = $rowAdmins['total_admins'];
+
+// Admin photo
+$photo = (!empty($admin_info['id_picture']) && file_exists($admin_info['id_picture'])) ? $admin_info['id_picture'] : 'https://via.placeholder.com/80';
+$full_name = htmlspecialchars($admin_info['first_name'] . ' ' . $admin_info['last_name']);
+$email = htmlspecialchars($admin_info['email']);
+$contact = htmlspecialchars($admin_info['contact']);// Get Admin Info
+$admin_id = $_SESSION['admin_id'] ?? null;
+if ($admin_id) {
+    $stmt = $conn->prepare("SELECT * FROM admins WHERE id=?");
+    $stmt->bind_param("i", $admin_id);
+    $stmt->execute();
+    $admin_result = $stmt->get_result();
+    $admin_info = $admin_result->fetch_assoc();
+    $stmt->close();
+} else {
+    $admin_info = [
+        'first_name' => 'Unknown',
+        'last_name' => '',
+        'email' => '',
+        'contact' => '',
+        'id_picture' => 'https://via.placeholder.com/80',
+        'role' => 'Admin'
+    ];
+}
+
+$photo = (!empty($admin_info['id_picture']) && file_exists($admin_info['id_picture'])) ? $admin_info['id_picture'] : 'https://via.placeholder.com/80';
+$full_name = htmlspecialchars($admin_info['first_name'] . ' ' . $admin_info['last_name']);
+$email = htmlspecialchars($admin_info['email']);
+$contact = htmlspecialchars($admin_info['contact']);
+
+// Handle logout
+if (isset($_GET['logout'])) {
+    session_destroy();
+    header("Location: login.php");
+    exit();
+}
+
+
 ?>
 
-      <div id="home" class="section active">
-        <h1>Welcome to the Admin Dashboard</h1>
-        <div class="profile-card">
-          <img src="https://via.placeholder.com/80" alt="Profile Picture">
-          <div class="profile-info">
-            <h3>John Doe</h3>
-            <p>Email: johndoe@example.com</p>
-            <p>Contact: +63 912 345 6789</p>
-          </div>
-        </div>
-        <div class="actions">
-          <button onclick="messageAdmin()"><i class="fa-solid fa-envelope"></i> Message</button>
-          <button onclick="logout()"><i class="fa-solid fa-right-from-bracket"></i> Logout</button>
-        </div>
-        <div class="card-container">
-          <div class="card">
-            <h2><?php echo $totalProducts; ?></h2>
-            <p>Products</p>
-          </div>
-          <div class="card">
-            <h2><?php echo $totalAisles; ?></h2>
-            <p>Aisles</p>
-          </div>
-          <div class="card">
-            <h2><?php echo $totalAdmins; ?></h2>
-            <p>Admins</p>
-          </div>
-        </div>
+<div id="home" class="section active" style="background:#f6f7fa;padding:0;">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@700;800&display=swap');
+:root {
+  --primary: #22c55e;
+  --primary-bg: #e7faee;
+  --blue: #3b82f6;
+  --orange: #f59e42;
+  --purple: #a78bfa;
+  --gray: #f3f4f6;
+  --shadow: 0 8px 32px rgba(44,68,80,0.09);
+  --radius-lg: 30px;
+  --radius-md: 18px;
+  --radius-sm: 13px;
+}
+.shp-topbar {
+  display:flex; align-items:center; justify-content:space-between;
+  padding:32px 40px 18px 40px; background:#fff; box-shadow:var(--shadow);
+  border-radius:0 0 var(--radius-lg) var(--radius-lg); margin-bottom:35px;
+  font-family:'Inter',sans-serif; position:relative; z-index:2;
+}
+.shp-logo-block {
+  display:flex; flex-direction:column; align-items:flex-start;
+}
+.shp-logo {
+  font-size:2.7rem; color:var(--primary); font-weight:800; letter-spacing:1px; font-family:'Inter',sans-serif;
+}
+.shp-logo-sub {
+  font-size:1.1rem; color:#7dd3fc; font-weight:600; margin-top:2px; letter-spacing:0.6px;
+}
+.shp-topbar-right {
+  display:flex; align-items:center; gap:28px;
+}
+.shp-lastupdated {
+  font-size:0.96rem; color:#64748b; font-weight:500; margin-right:8px;
+}
+.shp-bell {
+  font-size:1.5rem; color:var(--primary); position:relative; cursor:pointer; margin-right:11px;
+  transition: color .16s;
+}
+.shp-bell:hover { color:var(--blue);}
+.shp-avatar-block {
+  display:flex; align-items:center; gap:13px; background:var(--primary-bg);
+  padding:6px 18px 6px 7px; border-radius:100px;
+  box-shadow:0 2px 8px #22c55e1a;
+}
+.shp-avatar-block img {
+  width:46px; height:46px; border-radius:50%; object-fit:cover; border:2.5px solid var(--primary);
+}
+.shp-username-role {
+  display:flex; flex-direction:column; align-items:flex-start;
+}
+.shp-user {
+  font-weight:700; font-size:1.15rem; color:#22223b; font-family:'Inter',sans-serif;
+}
+.shp-role {
+  font-size:0.97rem; color:var(--primary); font-weight:700; letter-spacing:0.2px; margin-top:-2px;
+}
+
+/* --- Metrics Card Row --- */
+.shp-metrics-row {
+  display: grid; grid-template-columns: repeat(4,1fr); gap:36px; margin-bottom:20px;
+}
+.shp-metric-card {
+  background:#fff; border-radius:var(--radius-lg); box-shadow: var(--shadow);
+  padding:36px 32px 34px 32px; display:flex; flex-direction:column; align-items:flex-start;
+  min-height:154px; position:relative; overflow:visible; font-family:'Inter',sans-serif;
+}
+.shp-metric-icon {
+  width:44px;height:44px;display:flex;align-items:center;justify-content:center;
+  border-radius:16px; font-size:2.1rem; margin-bottom:18px; color:#fff;
+}
+.mic-green { background:linear-gradient(135deg,#22c55e 60%,#bbf7d0 98%);}
+.mic-blue { background:linear-gradient(135deg,#3b82f6 60%,#dbeafe 98%);}
+.mic-orange { background:linear-gradient(135deg,#f59e42 60%,#fdba74 98%);}
+.mic-purple { background:linear-gradient(135deg,#a78bfa 60%,#ddd6fe 98%);}
+.shp-metric-num {
+  font-size:2.7rem; font-weight:800; color:#18181b; margin-bottom:2px; line-height:1.19;
+}
+.shp-metric-context {
+  font-size:1.1rem; font-weight:500; color:#64748b; margin-top:3px;
+}
+/* --- Secondary Metrics Row --- */
+.shp-metrics-row2 {
+  display: grid; grid-template-columns: repeat(4,1fr); gap:22px; margin-bottom:34px;
+}
+.shp-metric2-card {
+  background:#fff; border-radius:var(--radius-md); box-shadow:0 4px 14px #0001;
+  padding:25px 22px 24px 22px; display:flex; align-items:center; gap:20px; font-family:'Inter',sans-serif;
+}
+.shp-metric2-icon {
+  width:36px;height:36px;display:flex;align-items:center;justify-content:center;
+  border-radius:12px; font-size:1.45rem; color:#fff; flex-shrink:0;
+}
+.mic2-green { background:linear-gradient(135deg,#22c55e 70%,#bbf7d0 98%);}
+.mic2-blue { background:linear-gradient(135deg,#3b82f6 70%,#bae6fd 98%);}
+.mic2-orange { background:linear-gradient(135deg,#f59e42 80%,#fdba74 98%);}
+.mic2-purple { background:linear-gradient(135deg,#a78bfa 80%,#ddd6fe 98%);}
+.shp-metric2-content { display:flex; flex-direction:column;}
+.shp-metric2-num { font-size:1.45rem; font-weight:700; color:#18181b;}
+.shp-metric2-label { font-size:1rem; font-weight:500; color:#64748b; }
+
+/* --- Main 3-Column Grid --- */
+.shp-main-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr; /* 2 columns */
+  gap: 32px;
+  margin-bottom: 36px;
+}
+
+.shp-recent-act,
+.shp-mgmt-hub {
+  min-width: 0; /* Prevent overflow */
+  width: 100%;
+}
+
+
+
+/* --- Recent Activity --- */
+.shp-recent-act {
+  background:#fff; border-radius:var(--radius-md); box-shadow:var(--shadow); font-family:'Inter',sans-serif;
+  padding:28px 27px 18px 27px; display:flex; flex-direction:column; min-height:300px;
+}
+.shp-recent-title {
+  font-size:1.23rem; font-weight:700; color:var(--blue); margin-bottom:13px; display:flex; align-items:center; gap:10px;
+}
+.shp-recent-title i { font-size:1.45rem; animation:shpPulse 1.2s infinite;}
+@keyframes shpPulse {
+  0%,100%{color:var(--blue);}
+  50%{color:#60a5fa;}
+}
+.shp-activity-list {
+  display:flex; flex-direction:column; gap:9px; margin-bottom:10px;
+}
+.shp-activity-item {
+  display:flex; align-items:center; gap:10px; font-size:1.01rem; color:#374151;
+}
+.shp-activity-dot {
+  width:11px;height:11px;background:var(--primary);border-radius:50%;margin-right:3px;display:inline-block;
+  box-shadow:0 0 0 2px #bbf7d0;
+}
+.shp-activity-user { font-weight:600; color:#22c55e; margin-right:3px;}
+.shp-activity-time { font-size:0.96em; color:#64748b; margin-left:6px;}
+.shp-activity-completed { color:var(--primary);}
+.shp-all-activity-link {
+  margin-top:7px; color:var(--blue); font-weight:600; font-size:1.02em; text-decoration:none; transition: color .16s;
+}
+.shp-all-activity-link:hover { color:#2563eb; text-decoration:underline;}
+
+/* --- Management Hub --- */
+.shp-mgmt-hub {
+  background:#fff; border-radius:var(--radius-md); box-shadow:var(--shadow); font-family:'Inter',sans-serif;
+  padding:28px 27px 28px 27px; display:flex; flex-direction:column; align-items:stretch;
+}
+.shp-mgmt-title {
+  font-size:1.23rem; font-weight:700; color:var(--primary); margin-bottom:15px; display:flex; align-items:center; gap:10px;
+}
+.shp-mgmt-title i {font-size:1.5rem;}
+.shp-mgmt-btn {
+  background:var(--primary); color:#fff; border:none; border-radius:14px; font-size:1.09em; font-weight:700;
+  padding:17px 0; margin-bottom:15px; transition: background .18s, color .12s; cursor:pointer; width:100%; box-shadow:0 2px 8px #22c55e1a;
+  display:flex; align-items:center; gap:13px; justify-content:center;
+}
+.shp-mgmt-btn:last-child {margin-bottom:0;}
+.shp-mgmt-btn:hover { background:#16a34a; }
+.shp-mgmt-btn.white {
+  background:#fff; color:var(--primary); border:2px solid var(--primary); box-shadow:none; margin-bottom:10px;
+}
+.shp-mgmt-btn.white:hover { background:var(--primary-bg); color:#15803d; border-color:#22c55e; }
+
+/* --- Footer Metrics Card --- */
+.shp-footer-metrics {
+  background:#fff; border-radius:var(--radius-lg); box-shadow:var(--shadow); font-family:'Inter',sans-serif;
+  padding:26px 34px; margin-top:25px; margin-bottom:20px; display:flex; flex-direction:column;
+}
+.shp-footer-title {
+  font-size:1.08rem; color:#22223b; font-weight:700; margin-bottom:15px; letter-spacing:0.3px;
+}
+.shp-footer-metrics-row {
+  display:grid; grid-template-columns:repeat(4,1fr); gap:32px;
+}
+.shp-footer-metric {
+  display:flex; flex-direction:column; align-items:center; gap:5px;
+}
+.shp-footer-num { font-size:1.6rem; font-weight:800; line-height:1.12;}
+.shp-footer-label { font-size:1.02rem; font-weight:600; letter-spacing:0.3px;}
+.num-blue { color:var(--blue);}
+.num-green { color:var(--primary);}
+.num-orange { color:var(--orange);}
+.num-purple { color:var(--purple);}
+@media (max-width: 1050px) {
+  .shp-metrics-row, .shp-metrics-row2, .shp-footer-metrics-row { grid-template-columns:1fr 1fr; gap:16px;}
+  .shp-main-grid { grid-template-columns:1fr; gap:18px;}
+}
+@media (max-width: 660px) {
+  .shp-metrics-row, .shp-metrics-row2, .shp-footer-metrics-row { grid-template-columns:1fr; }
+  .shp-topbar { flex-direction:column; align-items:flex-start; padding:22px; }
+  .shp-main-grid { grid-template-columns: 1fr; gap: 18px; }
+}
+</style>
+<!-- ==== TOP BAR ==== -->
+<div class="shp-topbar">
+  <div class="shp-logo-block">
+    <span class="shp-logo">ShopEase Admin</span>
+    <span class="shp-logo-sub">Centralized Store Management</span>
+  </div>
+  <div class="shp-topbar-right">
+    <span class="shp-lastupdated"><i class="fa-regular fa-clock"></i> Last updated: <?= $last_updated ?></span>
+    <span class="shp-bell"><i class="fa-regular fa-bell"></i></span>
+    <div class="shp-avatar-block">
+      <img src="<?= $photo ?>" alt="Profile" />
+      <div class="shp-username-role">
+        <span class="shp-user"><?= $username ?></span>
+        <span class="shp-role"><?= $role ?></span>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==== METRICS ROW ==== -->
+<div class="shp-metrics-row">
+  <div class="shp-metric-card">
+    <div class="shp-metric-icon mic-green"><i class="fa-solid fa-cubes"></i></div>
+    <div class="shp-metric-num"><?= $totalProducts ?></div>
+    <div class="shp-metric-context"><?= ($productsAdded>0) ? "+$productsAdded today" : "All active" ?></div>
+    <div class="shp-metric-context" style="font-size:.97em;color:#a7f3d0;">Total Products</div>
+  </div>
+  <div class="shp-metric-card">
+    <div class="shp-metric-icon mic-blue"><i class="fa-solid fa-bars-staggered"></i></div>
+    <div class="shp-metric-num"><?= $totalAisles ?></div>
+    <div class="shp-metric-context">Store Aisles</div>
+    <div class="shp-metric-context" style="font-size:.97em;color:#bae6fd;">Organized</div>
+  </div>
+  <div class="shp-metric-card">
+    <div class="shp-metric-icon mic-orange"><i class="fa-solid fa-users"></i></div>
+    <div class="shp-metric-num"><?= $totalAdmins ?></div>
+    <div class="shp-metric-context"><?= $onPromo?> admins on promo ops</div>
+    <div class="shp-metric-context" style="font-size:.97em;color:#fed7aa;">Admin Users</div>
+  </div>
+  <div class="shp-metric-card">
+    <div class="shp-metric-icon mic-purple"><i class="fa-solid fa-chart-line"></i></div>
+    <div class="shp-metric-num"><?= $todayAct ?></div>
+    <div class="shp-metric-context"><?= ($todayAct>0) ? "Activity today" : "No logs yet" ?></div>
+    <div class="shp-metric-context" style="font-size:.97em;color:#ddd6fe;">Today's Activity</div>
+  </div>
+</div>
+<!-- ==== SECONDARY METRICS ==== -->
+<div class="shp-metrics-row2">
+  <div class="shp-metric2-card">
+    <span class="shp-metric2-icon mic2-green"><i class="fa-solid fa-check-circle"></i></span>
+    <div class="shp-metric2-content">
+      <span class="shp-metric2-num"><?= $availableProducts ?></span>
+      <span class="shp-metric2-label">Available Products</span>
+    </div>
+  </div>
+  <div class="shp-metric2-card">
+    <span class="shp-metric2-icon mic2-blue"><i class="fa-solid fa-bolt"></i></span>
+    <div class="shp-metric2-content">
+      <span class="shp-metric2-num"><?= $onPromo ?></span>
+      <span class="shp-metric2-label">On Promo</span>
+    </div>
+  </div>
+  <div class="shp-metric2-card">
+    <span class="shp-metric2-icon mic2-orange"><i class="fa-solid fa-box-open"></i></span>
+    <div class="shp-metric2-content">
+      <span class="shp-metric2-num"><?= $outOfStock ?></span>
+      <span class="shp-metric2-label">Out of Stock</span>
+    </div>
+  </div>
+  <div class="shp-metric2-card">
+    <span class="shp-metric2-icon mic2-purple"><i class="fa-solid fa-list"></i></span>
+    <div class="shp-metric2-content">
+      <span class="shp-metric2-num"><?= $pendingActions ?></span>
+      <span class="shp-metric2-label">Pending Actions</span>
+    </div>
+  </div>
+</div>
+<!-- ==== MAIN GRID ==== -->
+<div class="shp-main-grid">
+
+  <!-- Recent Activity -->
+  <div class="shp-recent-act">
+    <div class="shp-recent-title"><i class="fa-solid fa-wave-square"></i> Recent Activity</div>
+    <div class="shp-activity-list" id="shpActivityList">
+      <div class="shp-activity-item"><span class="shp-activity-dot"></span>Loading recent activity...</div>
+    </div>
+    <a href="#" class="shp-all-activity-link" onclick="showSection('admin')">View All Activity</a>
+  </div>
+  <!-- Management Hub -->
+  <div class="shp-mgmt-hub">
+    <div class="shp-mgmt-title"><i class="fa-solid fa-gear"></i> Management Hub</div>
+    <button class="shp-mgmt-btn" onclick="showSection('product')"><i class="fa-solid fa-tags"></i> Product Management</button>
+    <button class="shp-mgmt-btn" onclick="showSection('aisle')"><i class="fa-solid fa-boxes-stacked"></i> Aisle Management</button>
+    <button class="shp-mgmt-btn" onclick="showSection('admin')"><i class="fa-solid fa-users"></i> User Management</button>
+    <button class="shp-mgmt-btn white" onclick="showSection('admin')"><i class="fa-solid fa-list"></i> Activity Logs</button>
+  </div>
+</div>
+<!-- ==== FOOTER METRICS ==== -->
+<div class="shp-footer-metrics">
+  <div class="shp-footer-title">Today's Metrics</div>
+  <div class="shp-footer-metrics-row">
+    <div class="shp-footer-metric">
+      <span class="shp-footer-num num-blue"><?= $productsAdded ?></span>
+      <span class="shp-footer-label">Products Added</span>
+    </div>
+    <div class="shp-footer-metric">
+      <span class="shp-footer-num num-green"><?= $productsUpdated ?></span>
+      <span class="shp-footer-label">Products Updated</span>
+    </div>
+    <div class="shp-footer-metric">
+      <span class="shp-footer-num num-orange"><?= $promosToday ?></span>
+      <span class="shp-footer-label">Promos Started</span>
+    </div>
+    <div class="shp-footer-metric">
+      <span class="shp-footer-num num-purple"><?= $aislesAddedToday ?></span>
+      <span class="shp-footer-label">Aisle Added</span>
+    </div>
+  </div>
+</div>
+<script>
+
+  function updateDashboardMetrics() {
+  fetch('dashboard.php', {
+    method: 'POST',
+    headers: {'Content-Type':'application/x-www-form-urlencoded'},
+    body: 'action=get_dashboard_metrics'
+  })
+  .then(r => r.json())
+  .then(data => {
+    // Top bar
+    document.querySelector('.shp-lastupdated').innerHTML =
+      `<i class="fa-regular fa-clock"></i> Last updated: ${data.last_updated}`;
+
+    // Top metrics row
+    document.querySelector('.shp-metric-num').textContent = data.totalProducts;
+    document.querySelectorAll('.shp-metric-num')[1].textContent = data.totalAisles;
+    document.querySelectorAll('.shp-metric-num')[2].textContent = data.totalAdmins;
+    document.querySelectorAll('.shp-metric-num')[3].textContent = data.todayAct;
+
+    document.querySelector('.shp-metric-context').textContent =
+      (data.productsAdded > 0) ? `+${data.productsAdded} today` : "All active";
+    document.querySelectorAll('.shp-metric-context')[3].textContent =
+      (data.todayAct > 0) ? "Activity today" : "No logs yet";
+    // Admins on promo ops
+    document.querySelectorAll('.shp-metric-context')[2].textContent =
+      `${data.onPromo} admins on promo ops`;
+
+    // Secondary metrics
+    document.querySelector('.shp-metric2-num').textContent = data.availableProducts;
+    document.querySelectorAll('.shp-metric2-num')[1].textContent = data.onPromo;
+    document.querySelectorAll('.shp-metric2-num')[2].textContent = data.outOfStock;
+    document.querySelectorAll('.shp-metric2-num')[3].textContent = data.pendingActions;
+
+    // Footer metrics
+    document.querySelector('.shp-footer-num.num-blue').textContent = data.productsAdded;
+    document.querySelector('.shp-footer-num.num-green').textContent = data.productsUpdated;
+    document.querySelector('.shp-footer-num.num-orange').textContent = data.promosToday;
+   document.querySelector('.shp-footer-num.num-purple').textContent = data.aislesAdded;
+  });
+}
+
+// Call every 15s
+window.addEventListener('DOMContentLoaded', updateDashboardMetrics);
+setInterval(updateDashboardMetrics, 15000);
+
+
+// --- AJAX for Recent Activity ---
+// Helper: human time ago
+function timeAgo(date) {
+  const now = new Date();
+  const seconds = Math.floor((now - date) / 1000);
+  if (seconds < 60) return "just now";
+  const intervals = [
+    { label: "year", seconds: 31536000 },
+    { label: "month", seconds: 2592000 },
+    { label: "day", seconds: 86400 },
+    { label: "hour", seconds: 3600 },
+    { label: "minute", seconds: 60 }
+  ];
+  for (const interval of intervals) {
+    const count = Math.floor(seconds / interval.seconds);
+    if (count >= 1)
+      return count + " " + interval.label + (count > 1 ? "s" : "") + " ago";
+  }
+  return "just now";
+}
+
+// Overwrite loadRecentActivity to match the new format
+function loadRecentActivity() {
+  fetch('dashboard.php', {
+    method: 'POST',
+    headers: {'Content-Type':'application/x-www-form-urlencoded'},
+    body: 'action=get_recent_activity'
+  })
+  .then(r => r.json())
+  .then(logs => {
+    let html = '';
+    if (!logs.length) {
+      html = `<div class="shp-activity-item"><span class="shp-activity-dot"></span>No recent activity.</div>`;
+    } else {
+      html = `
+        <table class="recent-activity-table" style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr style="background:#f3f4f6;">
+              <th style="padding:8px 6px; color:#22223b;">Activity</th>
+              <th style="padding:8px 6px; color:#22223b;">User</th>
+              <th style="padding:8px 6px; color:#22223b;">Role</th>
+              <th style="padding:8px 6px; color:#22223b;">Time</th>
+            </tr>
+          </thead>
+          <tbody>
+      `;
+      logs.slice(0, 8).forEach(log => {
+        const time = new Date(log.created_at.replace(' ', 'T').replace(/-/g, '/'));
+        const ago = timeAgo(time);
+        const formatted = time.getFullYear() + '-' +
+                          String(time.getMonth()+1).padStart(2,'0') + '-' +
+                          String(time.getDate()).padStart(2,'0') + ' ' +
+                          String(time.getHours()).padStart(2,'0') + ':' +
+                          String(time.getMinutes()).padStart(2,'0') + ':' +
+                          String(time.getSeconds()).padStart(2,'0');
+        html += `
+          <tr style="border-bottom:1px solid #e5e7eb;">
+            <td style="padding:8px 6px;">${log.activity}</td>
+            <td style="padding:8px 6px;">${log.full_name}</td>
+            <td style="padding:8px 6px;">${log.role || '-'}</td>
+            <td style="padding:8px 6px; color:#64748b;">
+              <span title="${formatted}">${formatted}</span>
+              <div style="font-size:0.95em;color:#94a3b8;">(${ago})</div>
+            </td>
+          </tr>
+        `;
+      });
+      html += '</tbody></table>';
+    }
+    document.getElementById('shpActivityList').innerHTML = html;
+  });
+}
+window.addEventListener('DOMContentLoaded', loadRecentActivity);
+setInterval(loadRecentActivity, 16000);
+</script>
+</div>
+
+
+
       <!-- ==== AISLE MANAGEMENT ==== -->
       <div id="aisle" class="section">
         <h2 style="color:#1f2937; margin-bottom:25px; font-size:1.8rem;">Aisle Management</h2>
@@ -1634,34 +2444,16 @@ document.getElementById('modal-delete-form').onsubmit = async function(e){
     alert(data.message || "Error deleting account.");
   }
 };
-</script></div>
+</script>
+
+</div>
 
             </div>
 
 
 
-    <!-- === SIDE WIDGETS === -->
-    <div class="side-widgets">
-      <div class="log-history">
-        <h3><i class="fa-solid fa-list"></i> Log History</h3>
-        <ul id="logList">
-          <li>Logged in at 8:00 AM</li>
-          <li>Viewed Product Management at 8:15 AM</li>
-          <li>Edited Aisle #2 at 8:30 AM</li>
-        </ul>
-      </div>
-      <div class="widget clock" id="clock">
-        <i class="fa-solid fa-clock"></i>
-        <span>00:00:00</span>
-      </div>
-      <div class="widget calendar" id="calendar">
-        <i class="fa-solid fa-calendar-alt"></i>
-        <span>Loading date...</span>
-      </div>
-    </div>
-  </div>
 
-  <div id="notificationContainer" class="notif-popup"></div>
+    
 
 
 
@@ -1669,6 +2461,56 @@ document.getElementById('modal-delete-form').onsubmit = async function(e){
 
 
 <script>
+
+  
+function loadActivityLogs() {
+  fetch('dashboard.php', {
+    method: 'POST',
+    headers: {'Content-Type':'application/x-www-form-urlencoded'},
+    body: 'action=get_activity_logs'
+  })
+  .then(r => r.json())
+  .then(logs => {
+    let html = '';
+    if (!logs.length) {
+      html = "<li style='color:#888;'>No recent activity.</li>";
+    } else {
+      logs.forEach(log => {
+        let activity = log.activity.replace(/\(ID:.*?\)/g, '').replace(/ID:.*?(,|\))/g, '').trim();
+        const time = new Date(log.created_at);
+        const timeStr = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        html += `<li><span style="color:#0ea5e9;font-weight:bold;">[${timeStr}]</span> ${activity}</li>`;
+      });
+    }
+    document.getElementById('logList').innerHTML = html;
+  });
+}
+
+
+  function loadActivityLogs() {
+  fetch('dashboard.php', {
+    method: 'POST',
+    headers: {'Content-Type':'application/x-www-form-urlencoded'},
+    body: 'action=get_activity_logs'
+  })
+  .then(r => r.json())
+  .then(logs => {
+    let html = '';
+    if (!logs.length) {
+      html = "<li style='color:#888;'>No recent activity.</li>";
+    } else {
+      logs.forEach(log => {
+        const time = new Date(log.created_at);
+        const timeStr = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        html += `<li><span style="color:#0ea5e9;font-weight:bold;">[${timeStr}]</span> ${log.activity}</li>`;
+      });
+    }
+    document.getElementById('logList').innerHTML = html;
+  });
+}
+window.addEventListener('DOMContentLoaded', loadActivityLogs);
+setInterval(loadActivityLogs, 15000); // refresh every 15s
+
 // 1. Edit button shows on dropdown open
 function toggleCategory(catId){
   const el = document.getElementById('cat_' + catId);
