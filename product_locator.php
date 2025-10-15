@@ -676,7 +676,6 @@ usort($categories, function($a, $b) {
   </div>
 </div>
 
-<!-- Map Modal -->
 <div id="map-modal" class="fixed inset-0 bg-black/40 z-50 hidden flex items-center justify-center">
   <div class="modal-content bg-white rounded-2xl shadow-modal p-8 w-[97vw] max-w-xl modal-fade relative flex flex-col gap-5">
     <button class="absolute top-4 right-5 text-gray-400 hover:text-accent text-3xl font-bold transition" onclick="document.getElementById('map-modal').style.display='none'"><i class="fas fa-times"></i></button>
@@ -703,9 +702,6 @@ usort($categories, function($a, $b) {
   </ul>
 </div>
 
-<!-- JSQR and Socket.io from original -->
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 
 <script>
     function startShopEase() {
@@ -883,211 +879,6 @@ document.addEventListener('keydown', (event) => {
     barcode = '';
   }
 });
-
-/* -------- MAP -------- */
-/* ===== Advanced Pathfinding Integration for ShopEase Map ===== */
-
-// Map: 7500 x 7500 units
-const GRID_WIDTH = 75, GRID_HEIGHT = 75;
-const CELL_SIZE = 100;
-// Define shelves (from your image, in units)
-const shelfRects = [
-  [1200,  600, 6300, 1100],   // AISLE 5
-  [1200, 2300, 6300, 2800],   // AISLE 4
-  [1200, 3700, 6300, 4200],   // AISLE 2
-];
-
-// Convert shelves to grid
-function createGrid() {
-  let grid = Array.from({length: GRID_WIDTH}, () => Array(GRID_HEIGHT).fill(0));
-  for (const [x1, y1, x2, y2] of shelfRects) {
-    const gx1 = Math.floor(x1 / CELL_SIZE), gy1 = Math.floor(y1 / CELL_SIZE);
-    const gx2 = Math.floor(x2 / CELL_SIZE), gy2 = Math.floor(y2 / CELL_SIZE);
-    for (let x = gx1; x <= gx2; x++) {
-      for (let y = gy1; y <= gy2; y++) {
-        grid[x][y] = 1;
-      }
-    }
-  }
-  return grid;
-}
-function heuristic(a, b) {
-  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
-}
-function astar(grid, start, goal) {
-  let open = [start];
-  let cameFrom = {};
-  let gScore = {};
-  let key = (p) => `${p.x},${p.y}`;
-  gScore[key(start)] = 0;
-  let fScore = {};
-  fScore[key(start)] = heuristic(start, goal);
-
-  while (open.length > 0) {
-    open.sort((a, b) => (fScore[key(a)] || 999999) - (fScore[key(b)] || 999999));
-    let current = open.shift();
-    if (current.x === goal.x && current.y === goal.y) {
-      let path = [current];
-      while (key(current) in cameFrom) {
-        current = cameFrom[key(current)];
-        path.push(current);
-      }
-      return path.reverse();
-    }
-    for (let [dx, dy] of [[0,1],[1,0],[0,-1],[-1,0]]) {
-      let nx = current.x + dx, ny = current.y + dy;
-      if (nx < 0 || ny < 0 || nx >= GRID_WIDTH || ny >= GRID_HEIGHT) continue;
-      if (grid[nx][ny] === 1) continue;
-      let neighbor = {x: nx, y: ny};
-      let tentative = gScore[key(current)] + 1;
-      if (tentative < (gScore[key(neighbor)] || 999999)) {
-        cameFrom[key(neighbor)] = current;
-        gScore[key(neighbor)] = tentative;
-        fScore[key(neighbor)] = tentative + heuristic(neighbor, goal);
-        if (!open.some(p => p.x === nx && p.y === ny)) open.push(neighbor);
-      }
-    }
-  }
-  return null;
-}
-function toCell(x, y) {
-  return { x: Math.floor(x / CELL_SIZE), y: Math.floor(y / CELL_SIZE) };
-}
-function fromCell(cell) {
-  return { x: cell.x * CELL_SIZE + CELL_SIZE/2, y: cell.y * CELL_SIZE + CELL_SIZE/2 };
-}
-
-// Center points for aisles and entrance (from your map)
-const aisles = {
-  "Aisle 1": {x: 3750, y: 4700},
-  "Aisle 2": {x: 3750, y: 3950},
-  "Aisle 3": {x: 3750, y: 3050},
-  "Aisle 4": {x: 3750, y: 2550},
-  "Aisle 5": {x: 3750, y: 850},
-};
-const entrance = {x: 3750, y: 7250};
-
-// Updated draw functions
-function drawStoreMap(highlightAisle = null) {
-  const canvas = document.getElementById('store-map-canvas');
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  const scaleX = canvas.width  / 7500;
-  const scaleY = canvas.height / 7500;
-
-  // Draw shelves
-  ctx.fillStyle = "#444";
-  for (const [x1, y1, x2, y2] of shelfRects) {
-    ctx.fillRect(x1 * scaleX, y1 * scaleY, (x2 - x1) * scaleX, (y2 - y1) * scaleY);
-  }
-  // Draw aisles
-  for (const [aisleName, pos] of Object.entries(aisles)) {
-    ctx.beginPath();
-    ctx.arc(pos.x * scaleX, pos.y * scaleY, 20, 0, 2 * Math.PI);
-    ctx.fillStyle = (highlightAisle && aisleName === highlightAisle) ? '#ff5722' : '#2196f3';
-    ctx.fill();
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.fillStyle = '#fff';
-    ctx.font = "bold 10px Arial";
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText(aisleName, pos.x * scaleX, pos.y * scaleY - 25);
-  }
-  // Draw entrance
-  ctx.beginPath();
-  ctx.arc(entrance.x * scaleX, entrance.y * scaleY, 18, 0, 2 * Math.PI);
-  ctx.fillStyle = '#2ecc40';
-  ctx.fill();
-  ctx.strokeStyle = '#fff';
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  ctx.fillStyle = '#fff';
-  ctx.font = "bold 9px Arial";
-  ctx.fillText("ENTRANCE", entrance.x * scaleX, entrance.y * scaleY - 22);
-}
-
-function drawCartOnMapWithAisle(cartX, cartY, highlightAisle) {
-  drawStoreMap(highlightAisle);
-  const canvas = document.getElementById('store-map-canvas');
-  if (!canvas) return;
-  const ctx = canvas.getContext('2d');
-  const scaleX = canvas.width / 7500;
-  const scaleY = canvas.height / 7500;
-
-  let aislePos = aisles[highlightAisle];
-  if (aislePos) {
-    // Advanced pathfinding
-    let grid = createGrid();
-    let start = toCell(cartX, cartY);
-    let goal = toCell(aislePos.x, aislePos.y);
-    let path = astar(grid, start, goal);
-    if (path && path.length > 1) {
-      ctx.beginPath();
-      let {x: px, y: py} = fromCell(path[0]);
-      ctx.moveTo(px * scaleX, py * scaleY);
-      for (let pt of path) {
-        let {x, y} = fromCell(pt);
-        ctx.lineTo(x * scaleX, y * scaleY);
-      }
-      ctx.strokeStyle = "#FFD700";
-      ctx.lineWidth = 4;
-      ctx.setLineDash([12, 8]);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-  }
-  // Draw cart
-  ctx.beginPath();
-  ctx.arc(cartX * scaleX, cartY * scaleY, 13, 0, 2 * Math.PI);
-  ctx.fillStyle = "#FFD700";
-  ctx.fill();
-  ctx.strokeStyle = "#000";
-  ctx.lineWidth = 2;
-  ctx.stroke();
-  ctx.font = "bold 13px Arial";
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'bottom';
-  ctx.fillStyle = "#000";
-  ctx.fillText("Cart", cartX * scaleX, cartY * scaleY - 16);
-}
-
-// Socket.IO integration (keep your current IP/port)
-const socket = io('http://10.186.1.27:5050');
-let lastCartPosition = null;
-window.lastAisleHighlight = null;
-
-socket.on('cart_position', function(data) {
-    lastCartPosition = data;
-    if (document.getElementById('map-modal').style.display === 'flex') {
-        drawCartOnMapWithAisle(data.x, data.y, window.lastAisleHighlight);
-    }
-});
-
-// Show product location with path
-function showProductLocation(aisle) {
-    document.getElementById('map-modal').style.display = 'flex';
-    document.getElementById('map-title').innerText = "Store Map - " + aisle;
-    window.lastAisleHighlight = aisle;
-    if (lastCartPosition) {
-        drawCartOnMapWithAisle(lastCartPosition.x, lastCartPosition.y, aisle);
-    } else {
-        drawStoreMap(aisle);
-    }
-}
-// Show just cart
-function showCartLocation() {
-    document.getElementById('map-modal').style.display = 'flex';
-    document.getElementById('map-title').innerText = "Store Map - Cart Location";
-    window.lastAisleHighlight = null;
-    if (lastCartPosition) {
-        drawCartOnMapWithAisle(lastCartPosition.x, lastCartPosition.y, null);
-    } else {
-        drawStoreMap(null);
-    }
-}
 </script>
 
 
@@ -1319,5 +1110,275 @@ document.addEventListener("DOMContentLoaded", function () {
   });
 });
 </script>
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+// --- MAP AND GUIDANCE LOGIC ---
+const MAP_PHYSICAL_SIZE = 300; // 3m x 3m in cm
+const CANVAS_SIZE = 500;
+const scaleX = CANVAS_SIZE / MAP_PHYSICAL_SIZE;
+const scaleY = CANVAS_SIZE / MAP_PHYSICAL_SIZE;
+
+const shelfRects = [
+  [50, 50, 250, 80],
+  [50, 130, 250, 160],
+  [50, 210, 250, 240],
+];
+
+// Four corners for aisles
+const aisles = {
+  "Aisle 1": {x: 0, y: 0},         // Top-left
+  "Aisle 2": {x: 300, y: 0},       // Top-right
+  "Aisle 3": {x: 300, y: 300},     // Bottom-right
+  "Aisle 4": {x: 0, y: 300},       // Bottom-left
+};
+const entrance = {x: 150, y: 300}; // Bottom center
+
+let cartXY = null;
+let currentHeading = null;
+let guidanceAisle = null;
+let cartXYHistory = [];
+const MAX_XY_HISTORY = 5;
+
+function updateCartXYWithSmoothing(newXY) {
+  cartXYHistory.push(newXY);
+  if (cartXYHistory.length > MAX_XY_HISTORY) cartXYHistory.shift();
+  let avgX = cartXYHistory.reduce((sum, pt) => sum + pt.x, 0) / cartXYHistory.length;
+  let avgY = cartXYHistory.reduce((sum, pt) => sum + pt.y, 0) / cartXYHistory.length;
+  cartXY = { x: avgX, y: avgY };
+}
+
+// --- SIMPLE ASTAR PATHFINDING FOR GUIDANCE ---
+function toCell(x, y) {
+  const cellSize = 25; // 300/12 ~ 25, for a 12x12 grid
+  return { x: Math.floor(x / cellSize), y: Math.floor(y / cellSize) };
+}
+function fromCell(cell) {
+  const cellSize = 25;
+  return { x: cell.x * cellSize + cellSize/2, y: cell.y * cellSize + cellSize/2 };
+}
+function heuristic(a, b) {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+function createGuidanceGrid() {
+  const gridSize = 12;
+  let grid = Array.from({length: gridSize}, () => Array(gridSize).fill(0));
+  // Block out shelves as obstacles
+  for (const [x1, y1, x2, y2] of shelfRects) {
+    const cellSize = 25;
+    const gx1 = Math.floor(x1 / cellSize), gy1 = Math.floor(y1 / cellSize);
+    const gx2 = Math.floor(x2 / cellSize), gy2 = Math.floor(y2 / cellSize);
+    for (let x = gx1; x <= gx2; x++) {
+      for (let y = gy1; y <= gy2; y++) {
+        if (x >= 0 && x < gridSize && y >= 0 && y < gridSize) grid[x][y] = 1;
+      }
+    }
+  }
+  return grid;
+}
+function astar(grid, start, goal) {
+  let open = [start];
+  let cameFrom = {};
+  let gScore = {};
+  let key = (p) => `${p.x},${p.y}`;
+  gScore[key(start)] = 0;
+  let fScore = {};
+  fScore[key(start)] = heuristic(start, goal);
+
+  while (open.length > 0) {
+    open.sort((a, b) => (fScore[key(a)] || 999999) - (fScore[key(b)] || 999999));
+    let current = open.shift();
+    if (current.x === goal.x && current.y === goal.y) {
+      let path = [current];
+      while (key(current) in cameFrom) {
+        current = cameFrom[key(current)];
+        path.push(current);
+      }
+      return path.reverse();
+    }
+    for (let [dx, dy] of [[0,1],[1,0],[0,-1],[-1,0]]) {
+      let nx = current.x + dx, ny = current.y + dy;
+      if (nx < 0 || ny < 0 || nx >= grid.length || ny >= grid[0].length) continue;
+      if (grid[nx][ny] === 1) continue;
+      let neighbor = {x: nx, y: ny};
+      let tentative = gScore[key(current)] + 1;
+      if (tentative < (gScore[key(neighbor)] || 999999)) {
+        cameFrom[key(neighbor)] = current;
+        gScore[key(neighbor)] = tentative;
+        fScore[key(neighbor)] = tentative + heuristic(neighbor, goal);
+        if (!open.some(p => p.x === nx && p.y === ny)) open.push(neighbor);
+      }
+    }
+  }
+  return null;
+}
+
+function drawStoreMap(highlightAisle = null) {
+  const canvas = document.getElementById('store-map-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Draw shelves
+  ctx.fillStyle = "#444";
+  for (const [x1, y1, x2, y2] of shelfRects) {
+    ctx.fillRect(x1 * scaleX, y1 * scaleY, (x2 - x1) * scaleX, (y2 - y1) * scaleY);
+  }
+  // Draw aisles (corners)
+  for (const [aisleName, pos] of Object.entries(aisles)) {
+    ctx.beginPath();
+    ctx.arc(pos.x * scaleX, pos.y * scaleY, 20, 0, 2 * Math.PI);
+    ctx.fillStyle = (highlightAisle && aisleName === highlightAisle) ? '#ff5722' : '#2196f3';
+    ctx.fill();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.fillStyle = '#fff';
+    ctx.font = "bold 10px Arial";
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(aisleName, pos.x * scaleX, pos.y * scaleY - 25);
+  }
+  // Draw entrance
+  ctx.beginPath();
+  ctx.arc(entrance.x * scaleX, entrance.y * scaleY, 18, 0, 2 * Math.PI);
+  ctx.fillStyle = '#2ecc40';
+  ctx.fill();
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.fillStyle = '#fff';
+  ctx.font = "bold 9px Arial";
+  ctx.fillText("ENTRANCE", entrance.x * scaleX, entrance.y * scaleY - 22);
+}
+
+function drawCartOnMapWithAisle(cartX, cartY, highlightAisle) {
+  drawStoreMap(highlightAisle);
+  const canvas = document.getElementById('store-map-canvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+
+  // Draw guidance path if guidanceAisle is set
+  if (guidanceAisle && aisles[guidanceAisle]) {
+    let grid = createGuidanceGrid();
+    let startCell = toCell(cartX, cartY);
+    let goalCell = toCell(aisles[guidanceAisle].x, aisles[guidanceAisle].y);
+    let path = astar(grid, startCell, goalCell);
+    if (path && path.length > 1) {
+      ctx.beginPath();
+      let first = fromCell(path[0]);
+      ctx.moveTo(first.x * scaleX, first.y * scaleY);
+      for (let pt of path) {
+        let {x, y} = fromCell(pt);
+        ctx.lineTo(x * scaleX, y * scaleY);
+      }
+      ctx.strokeStyle = "#FFD700";
+      ctx.lineWidth = 4;
+      ctx.setLineDash([10, 8]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+  }
+
+  // Draw cart
+  ctx.beginPath();
+  ctx.arc(cartX * scaleX, cartY * scaleY, 13, 0, 2 * Math.PI);
+  ctx.fillStyle = "#FFD700";
+  ctx.fill();
+  ctx.strokeStyle = "#000";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  ctx.font = "bold 13px Arial";
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'bottom';
+  ctx.fillStyle = "#000";
+  ctx.fillText("Cart", cartX * scaleX, cartY * scaleY - 16);
+
+  // Draw facing direction arrow if heading is available
+  if (typeof currentHeading === "number" && !isNaN(currentHeading)) {
+    const len = 28;
+    const rad = ((360 - currentHeading + 90) * Math.PI) / 180;
+    const arrowX = cartX * scaleX + len * Math.cos(rad);
+    const arrowY = cartY * scaleY + len * Math.sin(rad);
+
+    ctx.beginPath();
+    ctx.moveTo(cartX * scaleX, cartY * scaleY);
+    ctx.lineTo(arrowX, arrowY);
+    ctx.strokeStyle = "#2563eb";
+    ctx.lineWidth = 4;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(arrowX, arrowY, 5, 0, 2 * Math.PI);
+    ctx.fillStyle = "#2563eb";
+    ctx.fill();
+
+    ctx.font = "bold 10px Arial";
+    ctx.fillStyle = "#2563eb";
+    ctx.textAlign = "left";
+    ctx.textBaseline = "middle";
+    ctx.fillText("Facing: " + Math.round(currentHeading) + "°", cartX * scaleX + 20, cartY * scaleY + 20);
+  }
+}
+
+function redrawCartAndGuidance() {
+  if (!cartXY) return;
+  if (guidanceAisle && aisles[guidanceAisle]) {
+    drawCartOnMapWithAisle(cartXY.x, cartXY.y, guidanceAisle);
+  } else {
+    drawCartOnMapWithAisle(cartXY.x, cartXY.y, null);
+  }
+}
+
+function showCartLocation() {
+  document.getElementById('map-modal').style.display = 'flex';
+  document.getElementById('map-title').innerText = "Store Map - Cart Location";
+  guidanceAisle = null;
+  redrawCartAndGuidance();
+}
+
+window.addEventListener('deviceorientationabsolute', handleOrientation, true);
+window.addEventListener('deviceorientation', handleOrientation, true);
+function handleOrientation(event) {
+  let heading = event.alpha;
+  if (typeof event.webkitCompassHeading !== "undefined") {
+    heading = event.webkitCompassHeading;
+  }
+  if (typeof heading === "number") {
+    currentHeading = heading;
+  }
+  redrawCartAndGuidance();
+}
+
+// BLE trilateration cart position via Socket.IO
+const socket = io('https://10.255.146.244:5050', { transports: ['websocket'] });
+socket.on('cart_position', function(data) {
+  if (typeof data.x === "number" && typeof data.y === "number") {
+    updateCartXYWithSmoothing({x: data.x, y: data.y});
+    redrawCartAndGuidance();
+  }
+});
+
+// "Show Cart Location" button
+document.getElementById('showCartLocationBtn').addEventListener('click', function() {
+  guidanceAisle = null;
+  document.getElementById('map-modal').style.display = 'flex';
+  document.getElementById('map-title').innerText = "Store Map - Cart Location";
+  redrawCartAndGuidance();
+});
+
+// Modal close handler (optional)
+document.querySelector('#map-modal .fa-times').addEventListener('click', function() {
+  // Optionally clear cartXYHistory if needed
+});
+
+// "Locate Product" handler (for aisle guidance)
+window.showProductLocation = function(aisle) {
+  guidanceAisle = aisle;
+  document.getElementById('map-modal').style.display = 'flex';
+  document.getElementById('map-title').innerText = "Store Map - " + aisle;
+  redrawCartAndGuidance();
+};
+</script>
+
 </body>
 </html>
